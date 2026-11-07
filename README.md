@@ -55,6 +55,38 @@ pip install torch torchvision numpy pandas scikit-image scikit-learn matplotlib 
 
 A GPU is recommended for training on the full split. Use `maxSize` in the dataset class to train on a smaller subset while you test code.
 
+## Original baseline (professor's handout)
+
+This is the starting point every later run is compared against. It was checked cell by cell against the unmodified handout notebook (`Lab_4_Original.ipynb`, not in the repo). The repo's first commit (`41aad7f`) is **not** the untouched handout. The table below describes the handout itself and notes where `41aad7f` differs.
+
+| Setting | Handout value |
+|---|---|
+| Training data | `MAX_TRAIN_SAMPLES = 500` (a reproducible random subset of the 3,516 training images) |
+| Epochs | `CUSTOM_EPOCHS = 5`, `FT_EPOCHS = 5` |
+| Training transform | `RandomCrop(224)` → `ToTensor` → ImageNet `Normalize`. **Crop-only augmentation**: no flips, rotations or jitter. |
+| Val/test transform | `CenterCrop(224)` → `ToTensor` → `Normalize` |
+| Batches | 64 for training, 128 for val/test, `NUM_WORKERS = 0`, `SEED = 42` |
+| Loss | plain `nn.CrossEntropyLoss()`: no class weights, no label smoothing |
+| Training loop | keeps the best-val-macro-F1 checkpoint, runs every epoch, no TTA, saves no weights |
+
+**Original CUSTOM.** In the handout, `CustomNet.__init__` is an exercise that raises `NotImplementedError`. Its `forward()` and the comments fix the reference architecture, which `41aad7f` implements as follows:
+- `Conv2d(3, 6, 5)` → ReLU → `MaxPool2d(2)` (224 → 110)
+- `Conv2d(6, 16, 5)` → ReLU → `MaxPool2d(2)` (→ 53)
+- `Conv2d(16, 32, 5)` → ReLU → `MaxPool2d(2)` (→ 24)
+- flatten (32·24·24 = 18,432) → `Linear(18432, 120)` → ReLU → `Linear(120, 7)`
+- No BatchNorm, dropout or global pooling. Most of the parameters are in `fc1`.
+- SGD, lr `1e-2`, momentum 0.9, `StepLR(step_size=7, gamma=0.1)`. The step never fires in 5 epochs.
+
+**Original FINE-TUNING.** torchvision AlexNet (`IMAGENET1K_V1`), with `classifier[6]` replaced by `Linear(4096, 7)`. All weights are fine-tuned with SGD, lr `1e-3`, momentum 0.9, `StepLR(7, 0.1)`.
+
+**What `41aad7f` already changed relative to the handout:**
+- It filled in the `CustomNet` layers listed above.
+- It added the `ApplyToImage` and `RandomRotate90` transforms, plus the gallery of 32 augmentation combinations and 24 operation orders.
+- It switched training augmentation to `RandomCrop(224)` + H/V flips + rot90 + `ColorJitter(0.1, 0.1, 0.05)`.
+- It replaced the handout's demo `composed` pipeline (jitter with hue 0.01, flips) and filled the empty transform exercise cells.
+- It rewrote the intro note about the unfinished exercise and added a small `ToTensor` demo.
+- Everything from the metric/loss section onward (loss, optimisers, `train_model`, AlexNet, test, submission) is identical to the handout.
+
 ## Experiment log
 
 | Run | Date | Commit | Category | Model and recipe | Epochs | Best val macro F1 | Test macro F1 (CodaBench) |
