@@ -1,0 +1,209 @@
+% Lab 4 AVCV 2026/2027 report. Built on Overleaf's default article template
+% (pdfLaTeX + BibTeX). Upload this folder (main.tex, refs.bib, figures/) to Overleaf.
+%
+% PAGE BUDGET (Report Guidelines, "Format and individual contributions"):
+%   pages 1-3 : text describing the solutions (Sections 1-4, incl. contributions)
+%   page  4   : tables, figures and references only (starts with a page break)
+% Check the compiled PDF has exactly 4 pages before submitting.
+%
+% Red [TBD ...] marks are values that have not been measured yet. Running
+% report_figures.ipynb and copying its output into figures/ fills most of them
+% automatically; the rest must be typed in. None may remain in the final PDF.
+
+\documentclass[10pt]{article}
+
+\usepackage[english]{babel}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[a4paper,top=1.6cm,bottom=1.6cm,left=1.9cm,right=1.9cm]{geometry}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{caption}
+\usepackage{enumitem}
+\usepackage{multicol}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage[colorlinks=true, allcolors=blue]{hyperref}
+
+\captionsetup{font=small,labelfont=bf,skip=3pt}
+\setlist{nosep,leftmargin=*}
+\setlength{\parskip}{0pt}
+
+% ---- Placeholders for values that still have to be measured ----------------
+\newcommand{\TBD}[1]{\textcolor{red}{[TBD #1]}}
+\newcommand{\CustomValPlain}{\TBD{nb}}
+\newcommand{\CustomValTTA}{\TBD{nb}}
+\newcommand{\CustomValCal}{\TBD{nb}}
+\newcommand{\CustomAccPlain}{\TBD{nb}}
+\newcommand{\CustomAccCal}{\TBD{nb}}
+\newcommand{\FTValPlain}{\TBD{nb}}
+\newcommand{\FTValTTA}{\TBD{nb}}
+\newcommand{\FTValCal}{\TBD{nb}}
+\newcommand{\FTAccPlain}{\TBD{nb}}
+\newcommand{\FTAccCal}{\TBD{nb}}
+% Written by report_figures.ipynb; overrides the placeholders above when present.
+\IfFileExists{figures/val_numbers.tex}{\input{figures/val_numbers.tex}}{}
+% Per-class rows for Table 2 (decided here: \IfFileExists cannot start a table row).
+\IfFileExists{figures/per_class_rows.tex}%
+  {\newcommand{\PerClassRows}{\input{figures/per_class_rows.tex}}}%
+  {\newcommand{\PerClassRows}{%
+    Water & 86 & 29 & \multicolumn{6}{c}{\TBD{nb}}\\
+    Very Low & 1088 & 363 & \multicolumn{6}{c}{\TBD{nb}}\\
+    Low & 535 & 178 & \multicolumn{6}{c}{\TBD{nb}}\\
+    Moderate & 431 & 144 & \multicolumn{6}{c}{\TBD{nb}}\\
+    High & 315 & 105 & \multicolumn{6}{c}{\TBD{nb}}\\
+    Very High & 163 & 54 & \multicolumn{6}{c}{\TBD{nb}}\\
+    Non-burnable & 898 & 299 & \multicolumn{6}{c}{\TBD{nb}}\\}}
+
+% Figure that shows a framed placeholder until the notebook has produced it.
+\newcommand{\maybefig}[3]{%
+  \IfFileExists{figures/#1}{\includegraphics[width=#2]{figures/#1}}%
+  {\fbox{\parbox[c][#3][c]{0.97\linewidth}{\centering\textcolor{red}{[TBD figures/\detokenize{#1}: run report\_figures.ipynb]}}}}}
+
+\title{\vspace{-1.2cm}Predicting Fire Risk from Satellite Images with a Residual CNN Trained from Scratch and a Fine-Tuned ConvNeXt\vspace{-0.2cm}}
+\author{\TBD{Name 1 (NIA)} \and \TBD{Name 2 (NIA)}\\[1pt]
+\small Audio Processing, Video Processing and Computer Vision, Lab 4, Universidad Carlos III de Madrid, 2026/2027\\
+\small CodaBench team \TBD{ID1\_ID2}}
+\date{\vspace{-0.6cm}}
+
+\begin{document}
+\maketitle
+
+% =====================================================================
+\section{Introduction}
+% =====================================================================
+
+\textbf{Context and objective.} The task is to assign one of seven fire-risk classes (Water, Very Low, Low, Moderate, High, Very High, Non-burnable) to an RGB satellite image. This is image classification of a risk label, not fire detection or spread forecasting. Two properties make it hard. The classes are ordinal levels of one underlying quantity, so neighbouring classes (e.g.\ Low and Moderate) can look almost the same from above. The labels are also strongly imbalanced. The source dataset~\cite{shen2023firerisk} labels images with a wildfire-hazard raster, and its authors report top accuracies of about 65\% even with all 91{,}872 images, which shows how noisy the visual signal is. The competition metric is macro F1 over the seven classes, so the rare classes count as much as the frequent ones.
+
+\textbf{Dataset.} We use the supplied subset of 5{,}861 RGB images of $320\times320$ pixels: 3{,}516 for training, 1{,}172 for validation and 1{,}173 for testing (labels hidden). Training counts range from 86 (Water) and 163 (Very High) to 1{,}088 (Very Low); validation follows the same proportions (Table~\ref{tab:data}). The handout feeds the network $224\times224$ crops. Our final models train on $288\times288$ random crops and predict on the full $320\times320$ image.
+
+\textbf{Scope.} We built one model per competition category. CUSTOM is a residual CNN with 2.8M parameters, trained from scratch. FINE-TUNING is ConvNeXt-Tiny~\cite{liu2022convnext} pretrained on ImageNet-1K~\cite{deng2009imagenet}. We asked three questions: (i)~does the from-scratch model need more epochs or a better architecture and recipe; (ii)~how much does replacing the handout's AlexNet recipe with a modern backbone and optimiser help; (iii)~how much do test-time augmentation (TTA) and a macro-F1-oriented decision rule add on top of the trained networks.
+
+% =====================================================================
+\section{Methodology}
+% =====================================================================
+
+\subsection{Preprocessing and data augmentation}
+
+\textbf{Pipeline.} All images are decoded once and kept in RAM as \texttt{uint8} arrays. This removes JPEG decoding from every epoch and shortens training. At training time we take a random $288\times288$ crop, convert it to a float tensor in $[0,1]$, and apply random horizontal and vertical flips (each with $p=0.5$), a random rotation by a multiple of $90^\circ$ and mild colour jitter (brightness 0.1, contrast 0.1, saturation 0.05). Finally we normalise with the ImageNet mean and standard deviation, which both models use so that the fine-tuned backbone sees the statistics it was pretrained on. Validation and test images go through tensor conversion and normalisation only, at the full 320\,px resolution. Both networks end in global average pooling, so they accept the larger evaluation size without changes.
+
+\textbf{Justification.} An overhead image has no canonical orientation, so the eight flip/rotation symmetries of a square keep the land-cover content, and the label, unchanged. Right-angle rotations also avoid the padded corners that arbitrary angles create. We kept the colour jitter small because vegetation colour is probably one of the main cues for separating risk levels; we did not use hue shifts or greyscale conversion. The handout's $224$-pixel centre crop throws away about half of each image at evaluation time. Training on $288$-pixel crops and evaluating on the whole tile keeps more context. We checked every augmentation combination and ordering \emph{visually} for correctness, but we did not run a validation ablation of individual augmentations, so this choice is motivated rather than measured.
+
+\subsection{System design: CUSTOM network}
+
+\textbf{Architecture.} The handout's reference network has three $5\times5$ convolutions (6, 16 and 32 channels), each followed by ReLU and $2\times2$ max pooling, then a fully connected layer of $18{,}432\to120$ units and a 7-way output. Almost all of its 2.23M parameters are in that one dense layer, and it has no normalisation. Our final CustomNet is a small ResNet~\cite{he2016resnet} written with primitive PyTorch~\cite{paszke2019pytorch} layers only:
+\begin{itemize}
+  \item a stem with a stride-2 $3\times3$ convolution (32 channels), BatchNorm~\cite{ioffe2015batchnorm} and ReLU, which reduces $288\to144$ pixels;
+  \item four stages of two residual blocks each, with 32, 64, 128 and 256 channels. The first block of stages 2--4 has stride 2, so the feature map shrinks to $72$, $36$ and $18$ pixels. Each block is conv$3\times3$--BN--ReLU--conv$3\times3$--BN plus a shortcut (a $1\times1$ convolution with BN when the shape changes), followed by ReLU;
+  \item global average pooling~\cite{lin2014nin}, dropout 0.3 and a linear layer with 7 outputs.
+\end{itemize}
+It has 2{,}796{,}839 parameters. Convolutions use Kaiming initialisation, and the last BN scale of each block starts at zero, so every block begins as an identity mapping~\cite{goyal2017largeminibatch}.
+
+\textbf{Design decisions.} We moved to this design in two steps. Run~1 replaced the reference net with a plain VGG-style CNN: five blocks of two $3\times3$ conv--BN--ReLU layers and max pooling (32 to 256 channels), global average pooling and dropout, with 2.36M parameters. Run~1b trained that net for 60 instead of 25 epochs and the test score did not improve (0.43 vs.\ 0.44). We concluded that the bottleneck was the architecture, input resolution and recipe rather than the epoch budget. Run~2 therefore added residual connections, which make the deeper network easier to optimise, a strided stem that reduces the cost of working at 288\,px, and the larger input. Global average pooling keeps the parameter count close to the reference while removing the large, overfitting-prone dense layer.
+
+\subsection{System design: FINE-TUNING network}
+
+\textbf{Pretrained model.} The handout fine-tunes AlexNet~\cite{krizhevsky2012alexnet}. We use torchvision's~\cite{torchvision2016} ConvNeXt-Tiny~\cite{liu2022convnext} with \texttt{IMAGENET1K\_V1} weights (27.8M parameters, pretrained on ImageNet-1K~\cite{deng2009imagenet}). We replaced the final \texttt{Linear(768, 1000)} of the classifier with a newly initialised \texttt{Linear(768, 7)} and raised stochastic depth~\cite{huang2016stochasticdepth} from torchvision's default of 0.1 to 0.2 to add regularisation on this small dataset.
+
+\textbf{Adaptation strategy.} No layer is frozen. The classifier head (LayerNorm and linear layer) uses a learning rate of $10^{-3}$ and the pretrained backbone uses $10^{-4}$, so the ImageNet features change slowly while the new head learns fast. Preprocessing uses the ImageNet normalisation of the pretrained weights. The input is larger than the 224\,px used in pretraining, which the fully convolutional backbone supports. In run~1 the same backbone was trained with the handout's AlexNet recipe (SGD, learning rate $10^{-3}$, StepLR, 5 epochs). Its validation macro F1 peaked in the fourth of five epochs, train F1 reached only 0.47, and the step schedule never fired, so the learning rate stayed constant. Run~2 replaced this recipe, as described next.
+
+\subsection{Training protocol and model selection}
+
+\textbf{Configuration.} Both models minimise cross-entropy with class weights proportional to $1/\sqrt{n_c}$, normalised to mean 1, which gives weights from 0.53 (Very Low) to 1.90 (Water). They also use label smoothing of 0.1~\cite{szegedy2016labelsmoothing}. The square root is a compromise: Water is weighted 3.6 times more than Very Low, against about 13 times with full inverse-frequency weights. Both use AdamW~\cite{loshchilov2019adamw} with weight decay 0.05 and a one-cycle schedule~\cite{smith2019superconvergence} stepped every batch. CUSTOM trains for 50 epochs with peak learning rate $3\times10^{-3}$ and 20\% warm-up. FINE-TUNING trains for 20 epochs with peaks of $10^{-4}$ and $10^{-3}$ and 10\% warm-up. The batch size is 64, with fp16 mixed precision~\cite{micikevicius2018amp} on the GPU. The random seed is 42 and cuDNN is set to deterministic. We use the full training split with no subsampling. The handout's default of 500 images was only used for quick checks. Training ran on Google Colab with a \TBD{GPU model} GPU.
+
+\textbf{Selection and reproducibility.} After every epoch we compute validation macro F1 and save the weights whenever it improves. All epochs are run; we did \emph{not} implement early stopping. The selected weights are the best epoch. At prediction time we average the softmax outputs over the 8 flip/rotation views (TTA). Because macro F1 rewards recall on rare classes, we then multiply the probabilities by per-class weights and renormalise. The weights are found by coordinate ascent over the grid $\{0.5, 0.6, \dots, 3.0\}$ (3 passes) to maximise validation macro F1, in the spirit of F1-optimal thresholding~\cite{lipton2014f1}. These weights are fitted on the validation split, so the calibrated validation scores below are optimistic. Only the CodaBench scores are unbiased. The notebook saves the selected weights (\texttt{custom\_best.pt}, \texttt{ft\_best.pt}). With \texttt{LOAD\_CHECKPOINTS=True} it skips training and regenerates the submitted CSV files from them.
+
+% =====================================================================
+\section{Results and error analysis}
+% =====================================================================
+
+\textbf{Metrics.} We report macro F1 over all seven labels as the main metric. Training F1 is measured on augmented crops with dropout active. Validation F1 uses the full images. Test F1 comes from the public CodaBench leaderboard, which is computed on an undisclosed subset of the test set.
+
+\textbf{Experimental comparison.} Table~\ref{tab:exp} lists our runs. We re-ran the unmodified handout as the reference, with its default settings (500 training images, 5 epochs, on CPU). Its best validation macro F1 is 0.112 for the 3-convolution network and 0.314 for AlexNet, both reached in the last epoch. Run~1 scored about 0.44 on the test subset in both categories, and run~1b showed that 60 epochs gave nothing beyond 25. Run~2 reached 0.49 (CUSTOM) and 0.50 (FINE-TUNING) on the public test subset. Run~2 changed several factors at once: architecture, resolution, optimiser and schedule, TTA and calibration. We therefore cannot attribute the gain to one factor, apart from the inference-time steps. For those steps, validation macro F1 goes from \CustomValPlain{} (single view) to \CustomValTTA{} (TTA) and \CustomValCal{} (TTA + calibration) for CUSTOM, and from \FTValPlain{} to \FTValTTA{} and \FTValCal{} for FINE-TUNING. Accuracy moves from \CustomAccPlain{} to \CustomAccCal{} and from \FTAccPlain{} to \FTAccCal{}, respectively. \TBD{One sentence: does calibration trade accuracy for macro F1, and which classes gain? Use Table~\ref{tab:perclass}.}
+
+\textbf{Learning curves and confusion matrices.} \TBD{Describe Fig.~\ref{fig:curves} once it exists: where val F1 peaks, the train/val gap, and whether either model is still improving. The curves come from a retrain with the same recipe, not the exact submitted weights; say so.} The row-normalised validation confusion matrices (Fig.~\ref{fig:cm}) \TBD{describe: which off-diagonal cells are largest; whether errors fall mostly between neighbouring risk levels; how Water and Non-burnable do compared with the risk levels.}
+
+\textbf{Visual error analysis.} Fig.~\ref{fig:err} shows the most confident validation mistake for each of the most frequent confusions. \TBD{From the images: what do the confused pairs look like (e.g.\ similar vegetation density, mixed land cover in one tile)? Keep each claim tied to a visible example.} Compared with CUSTOM, FINE-TUNING \TBD{per-class comparison from Table~\ref{tab:perclass}}. The pretrained model needs 10 times more parameters but fewer epochs.
+
+\textbf{Competition feedback.} Our best public scores are 0.49 (CUSTOM) and 0.50 (FINE-TUNING), both from the run-2 submission \TBD{CodaBench submission ID and date}. Run~1 scored about 0.44 in both categories. \TBD{Replace the approximate values with the exact leaderboard numbers.}
+
+% =====================================================================
+\section{Conclusions}
+% =====================================================================
+
+For CUSTOM, a longer schedule alone did not help (run~1b). The combined change in run~2 (residual blocks, larger input, AdamW with one-cycle) raised the public score from 0.44 to 0.49. For FINE-TUNING, the handout's SGD/StepLR recipe (constant learning rate, 5 epochs) was not suited to ConvNeXt-Tiny. Discriminative learning rates, AdamW, one-cycle and 20 epochs at higher resolution raised the public score from 0.44 to 0.50. TTA and calibration add \TBD{x} and \TBD{y} validation points; the calibration part of that gain is measured in-sample. The 2.8M-parameter model trained from scratch ended only about 0.01 macro F1 below the 27.8M-parameter pretrained model on the public subset. With one run per model and a small public subset, we do not read this gap as a reliable ranking; it does show that a well-tuned small network was competitive on 3{,}516 images. The main limitations are that run~2 has no single-factor ablation, that the augmentations were not compared on validation, and that we used the same validation split for checkpoint selection and calibration. Realistic next steps are a held-out calibration split or cross-validation, ablating each run-2 change, stronger pretrained backbones, and ordinal-aware losses that exploit the ordering of the risk levels.
+
+\textbf{Team and individual contributions.} \TBD{Name 1}: \TBD{e.g.\ data pipeline and caching, augmentation study, CustomNet design and training (runs 1, 1b, 2).} \TBD{Name 2}: \TBD{e.g.\ fine-tuning experiments, TTA and calibration, CodaBench submissions, error analysis.} Both members wrote the report.
+
+% =====================================================================
+% PAGE 4: tables, figures and references only. Laid out as fixed
+% (non-floating) content so it stays on exactly one page.
+% =====================================================================
+\clearpage
+
+\noindent\begin{minipage}{\linewidth}
+\centering\footnotesize
+\captionof{table}{Experiments. Val F1: best-epoch single-view validation macro F1 (final row: after TTA and calibration). Test F1: public CodaBench macro F1 ($\approx$: approximate value from our log). All runs but the reference use the full training split.}\label{tab:exp}
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{@{}llp{6.6cm}p{3.1cm}rrr@{}}
+\toprule
+Run & Cat. & Change & Objective & Ep. & Val F1 & Test F1\\
+\midrule
+Ref. & CUST & Handout 3-conv net, SGD $10^{-2}$, StepLR, 500 images & reference & 5 & 0.112 & n/s \\
+Ref. & FT & Handout AlexNet, SGD $10^{-3}$, StepLR & reference & 5 & 0.314 & n/s \\
+1 & CUST & VGG-style BN CNN + GAP, weighted CE + LS, AdamW, cosine & stronger scratch net & 25 & 0.439 & $\approx$0.44 \\
+1 & FT & ConvNeXt-T, handout SGD/StepLR, run-1 loss and aug. & modern backbone & 5 & 0.461 & $\approx$0.44 \\
+1b & CUST & Run 1 net, unchanged recipe & is it epoch-limited? & 60 & n/r & $\approx$0.43 \\
+2 & CUST & Residual net (2.8M), 288/320 px, AdamW + one-cycle & architecture and recipe & 50 & \CustomValPlain & 0.49 \\
+2 & FT & ConvNeXt-T, SD 0.2, AdamW $10^{-4}$/$10^{-3}$, one-cycle & tuned fine-tuning & 20 & \FTValPlain & 0.50 \\
+2 & both & + 8-view TTA + per-class calibration & macro-F1 decision rule & -- & \CustomValCal{} / \FTValCal{}$^{\dagger}$ & 0.49 / 0.50 \\
+\bottomrule
+\end{tabular}\\[1pt]
+\raggedright\scriptsize n/r: not recorded; n/s: not submitted (re-run by us for this table). $^{\dagger}$Calibration is fitted on the validation split, so this value is optimistic.
+\end{minipage}
+
+\vspace{3pt}
+\noindent\begin{minipage}[t]{0.49\linewidth}\vspace{0pt}
+\centering\footnotesize
+\captionof{table}{Class counts and run-2 per-class validation precision (P), recall (R) and F1 after TTA and calibration.}\label{tab:data}\label{tab:perclass}
+\setlength{\tabcolsep}{2.6pt}
+\begin{tabular}{@{}lrrrrrrrr@{}}
+\toprule
+ & \multicolumn{2}{c}{Images} & \multicolumn{3}{c}{CUSTOM} & \multicolumn{3}{c}{FINE-TUNING}\\
+\cmidrule(lr){2-3}\cmidrule(lr){4-6}\cmidrule(l){7-9}
+Class & Train & Val & P & R & F1 & P & R & F1\\
+\midrule
+\PerClassRows
+\bottomrule
+\end{tabular}
+\end{minipage}\hfill
+\begin{minipage}[t]{3.3in}\vspace{0pt}
+\centering
+\maybefig{fig_curves.pdf}{3.25in}{4.7cm}
+\captionof{figure}{Train (solid) and validation (dashed) loss and macro F1 of a \emph{retrain} of the run-2 recipe; vertical line: best validation epoch.}\label{fig:curves}
+\end{minipage}
+
+\vspace{3pt}
+\noindent\begin{minipage}[t]{4.2in}\vspace{0pt}
+\centering
+\maybefig{fig_confusion.pdf}{4.15in}{5.3cm}
+\captionof{figure}{Row-normalised validation confusion matrices (\% of each true class; rows: true, columns: predicted) of the submitted run-2 models after TTA and calibration.}\label{fig:cm}
+\end{minipage}\hfill
+\begin{minipage}[t]{2.5in}\vspace{0pt}
+\centering
+\maybefig{fig_errors.pdf}{2.45in}{5.3cm}
+\captionof{figure}{Most confident validation errors for the three most frequent confusions of each model (T: true, P: predicted, probability).}\label{fig:err}
+\end{minipage}
+
+\vspace{4pt}
+{\scriptsize
+\begin{multicols}{3}
+\renewcommand{\section}[2]{}% suppress the default heading; we print our own
+\noindent\textbf{References}
+\setlength{\bibsep}{0pt}
+\bibliographystyle{unsrtnat}
+\bibliography{refs}
+\end{multicols}}
+
+\end{document}
